@@ -22,7 +22,7 @@ MODEL_URL = (
 )
 MODEL_PATH = "face_landmarker.task"
 
-DEBUG_SHOW_LANDMARKS = True  # show 468 points + polygons + bbox
+DEBUG_SHOW_LANDMARKS = False  # show 468 points + polygons + bbox (hidden by default)
 
 @st.cache_resource(show_spinner=True)
 def load_face_landmarker():
@@ -324,42 +324,37 @@ if uploaded:
     else:
         landmarks = result.face_landmarks[0]  # list of 468 NormalizedLandmark
 
-        # Create the before/after visualization
-        viz, results = visualize_skin_analysis_before_after(image, landmarks)
+        # Analyze skin colors (CLAHE still used internally for accuracy)
+        results, processed = analyze_skin_colors_before_after(image, landmarks)
         
-        st.image(
-            cv2.cvtColor(viz, cv2.COLOR_BGR2RGB),
-            caption="Skin Color Analysis: Before vs After CLAHE",
-            use_container_width=True
-        )
+        # === P1: PROMINENT "YOUR SKIN TONE" HERO RESULT ===
+        st.markdown("---")
+        st.markdown("## 🎨 Your Skin Tone")
         
-        # Display detailed results
-        st.markdown("### Skin Color Analysis Results")
+        # Large hero color swatch for final result
+        final_hex = results['final']['after']['hex']
+        st.markdown(f'''
+        <div style="text-align: center; padding: 20px;">
+            <div style="
+                width: 200px; 
+                height: 200px; 
+                background-color: {final_hex}; 
+                margin: 0 auto 15px auto; 
+                border-radius: 15px;
+                border: 4px solid #ddd;
+                box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            "></div>
+            <div style="font-size: 28px; font-weight: bold; color: #333; margin-bottom: 8px;">
+                {final_hex.upper()}
+            </div>
+        </div>
+        ''', unsafe_allow_html=True)
         
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("#### Before (Original)")
-            for region in ['left_cheek', 'right_cheek', 'forehead', 'final']:
-                region_label = region.replace('_', ' ').title()
-                hex_val = results[region]['before']['hex']
-                rgb_val = results[region]['before']['RGB']
-                st.markdown(f"**{region_label}:** {hex_val} RGB{rgb_val}")
-        
-        with col2:
-            st.markdown("#### After (CLAHE Normalized)")
-            for region in ['left_cheek', 'right_cheek', 'forehead', 'final']:
-                region_label = region.replace('_', ' ').title()
-                hex_val = results[region]['after']['hex']
-                rgb_val = results[region]['after']['RGB']
-                st.markdown(f"**{region_label}:** {hex_val} RGB{rgb_val}")
-        
-        # Estimate skin tone based on CLAHE-normalized L channel
+        # Estimate skin tone classification (secondary info)
         mask = np.zeros(image.shape[:2], dtype=np.uint8)
         for region in (LEFT_CHEEK, RIGHT_CHEEK, FOREHEAD):
             mask |= create_region_mask(image.shape, landmarks, region)
 
-        # Apply CLAHE to get normalized image for tone estimation
         normalized_image = apply_clahe_lab(image)
         lab = cv2.cvtColor(normalized_image, cv2.COLOR_BGR2LAB)
         l_channel = lab[:, :, 0]
@@ -368,10 +363,89 @@ if uploaded:
         if skin_pixels.size >= 500:
             mean_l = float(np.mean(skin_pixels))
             tone = estimate_skin_tone(mean_l)
-            st.success(f"Estimated Skin Tone: **{tone}**")
-            st.caption("Early-stage estimate. Lighting and makeup may affect results.")
-
-        if DEBUG_SHOW_LANDMARKS:
+            st.markdown(f"<div style='text-align: center; font-size: 18px; color: #666;'>Classification: <strong>{tone}</strong></div>", unsafe_allow_html=True)
+        
+        st.caption("📸 Results may vary with lighting and makeup")
+        
+        # === P0: LARGE VISUAL COLOR SWATCHES FOR REGIONS ===
+        st.markdown("---")
+        st.markdown("### 📍 Analyzed Regions")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        regions_data = [
+            ('left_cheek', 'Left Cheek', col1),
+            ('right_cheek', 'Right Cheek', col2),
+            ('forehead', 'Forehead', col3)
+        ]
+        
+        for region_key, region_label, col in regions_data:
+            with col:
+                hex_val = results[region_key]['after']['hex']
+                st.markdown(f"**{region_label}**")
+                st.markdown(f'''
+                <div style="text-align: center;">
+                    <div style="
+                        width: 100%; 
+                        height: 120px; 
+                        background-color: {hex_val}; 
+                        margin: 10px auto; 
+                        border-radius: 10px;
+                        border: 3px solid #ddd;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+                    "></div>
+                    <div style="font-size: 16px; font-weight: bold; color: #444;">
+                        {hex_val.upper()}
+                    </div>
+                </div>
+                ''', unsafe_allow_html=True)
+        
+        # Show clean original image
+        st.markdown("---")
+        st.markdown("### 📷 Your Image")
+        st.image(image_rgb, caption="Uploaded Image", use_container_width=True)
+        
+        # === P0: TECHNICAL DETAILS IN EXPANDER (COLLAPSED BY DEFAULT) ===
+        with st.expander("🔧 Technical Details", expanded=False):
+            st.markdown("#### How It Works")
+            st.markdown("""
+            This tool analyzes your skin tone by:
+            1. Detecting facial landmarks using MediaPipe
+            2. Sampling color from three regions: left cheek, right cheek, and forehead
+            3. Applying CLAHE (Contrast Limited Adaptive Histogram Equalization) for lighting normalization
+            4. Averaging the colors to determine your overall skin tone
+            """)
+            
+            # CLAHE Before/After Comparison
+            st.markdown("#### CLAHE Normalization Comparison")
+            viz, _ = visualize_skin_analysis_before_after(image, landmarks)
+            st.image(
+                cv2.cvtColor(viz, cv2.COLOR_BGR2RGB),
+                caption="Before vs After CLAHE Enhancement",
+                use_container_width=True
+            )
+            
+            # Detailed color values
+            st.markdown("#### Detailed Color Values")
+            
+            tab1, tab2 = st.tabs(["Before (Original)", "After (Normalized)"])
+            
+            with tab1:
+                for region in ['left_cheek', 'right_cheek', 'forehead', 'final']:
+                    region_label = region.replace('_', ' ').title()
+                    hex_val = results[region]['before']['hex']
+                    rgb_val = results[region]['before']['RGB']
+                    st.markdown(f"**{region_label}:** `{hex_val}` RGB{rgb_val}")
+            
+            with tab2:
+                for region in ['left_cheek', 'right_cheek', 'forehead', 'final']:
+                    region_label = region.replace('_', ' ').title()
+                    hex_val = results[region]['after']['hex']
+                    rgb_val = results[region]['after']['RGB']
+                    st.markdown(f"**{region_label}:** `{hex_val}` RGB{rgb_val}")
+            
+            # Debug overlays with landmarks
+            st.markdown("#### Debug Visualization")
             dbg = draw_debug_overlays(
                 image,
                 result,
@@ -381,4 +455,7 @@ if uploaded:
                 poly_color=(0, 255, 255) # yellow polygons
             )
             st.image(cv2.cvtColor(dbg, cv2.COLOR_BGR2RGB),
-                     caption="Debug: bbox (red), landmarks (blue), regions (yellow)")
+                     caption="Debug: Face bounding box (red), landmarks (blue), sampled regions (yellow)")
+        
+        st.markdown("---")
+        st.caption("💡 **Tip:** Expand 'Technical Details' above to see how the analysis works under the hood.")
