@@ -8,8 +8,8 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-st.set_page_config(page_title="MYRRAR MVP", layout="centered")
-st.title("MYRRAR – Skin Tone Analysis (MVP)")
+st.set_page_config(page_title="MYRRAR PreAlpha", layout="centered")
+st.title("MYRRAR – Skin Tone Analyzer (PreAlpha)")
 
 # --- Landmark indices for safe skin regions ---
 LEFT_CHEEK = [234, 93, 132, 58, 172, 214, 216, 203, 100, 229, 234]
