@@ -10,11 +10,12 @@ from mediapipe.tasks.python import vision
 
 st.set_page_config(page_title="MYRRAR PreAlpha", layout="centered")
 st.title("MYRRAR: Skin Tone Analyzer (PreAlpha)")
+st.sidebar.image("assets/myrrar_logo.jpg", use_container_width=True)
 
 # --- Landmark indices for safe skin regions ---
-LEFT_CHEEK = [234, 93, 132, 58, 172, 214, 216, 203, 100, 229, 234]
-RIGHT_CHEEK = [345, 352, 376, 433, 416, 434, 436, 423, 371, 349, 449, 340]
-FOREHEAD = [9, 107, 69, 104, 103, 67, 109, 10, 338, 297, 332, 333, 299, 336, 9]
+LEFT_CHEEK  = [116, 123, 187, 207, 206, 203, 142, 232, 229, 111]
+RIGHT_CHEEK = [340, 345, 352, 411, 427, 426, 423, 355, 357, 450] 
+FOREHEAD    = [9, 107, 69, 104, 103, 67, 109, 10, 338, 297, 332, 333, 299, 336, 9]
 
 MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
@@ -65,14 +66,45 @@ def create_region_mask(image_shape, landmarks, region_indices):
     return mask
 
 
-def estimate_skin_tone(l_channel_mean):
-    if l_channel_mean > 75:
-        return "Light"
-    if l_channel_mean > 60:
-        return "Medium"
-    if l_channel_mean > 45:
-        return "Tan"
-    return "Deep"
+def assess_lighting_quality(image_bgr, landmarks):
+    """
+    Assess image lighting quality for reliable skin tone extraction.
+    Returns a list of warning messages (empty if quality is good).
+    """
+    lab = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2LAB)
+    l_channel = lab[:, :, 0]
+    
+    warnings = []
+    
+    # Overall face brightness - combine all regions for face assessment
+    face_mask = np.zeros(image_bgr.shape[:2], dtype=np.uint8)
+    for region in (LEFT_CHEEK, RIGHT_CHEEK, FOREHEAD):
+        face_mask |= create_region_mask(image_bgr.shape, landmarks, region)
+    
+    face_l = l_channel[face_mask == 255]
+    
+    mean_brightness = np.mean(face_l)
+    std_brightness = np.std(face_l)
+    
+    if mean_brightness < 50:
+        warnings.append("Image appears too dark. Try better lighting.")
+    elif mean_brightness > 200:
+        warnings.append("Image appears overexposed. Avoid direct harsh light.")
+    
+    if std_brightness < 15:
+        warnings.append("The uploaded image may have a filter applied. Use an unedited photo for best results.")
+    
+    # Left/right symmetry
+    left_mask = create_region_mask(image_bgr.shape, landmarks, LEFT_CHEEK)
+    right_mask = create_region_mask(image_bgr.shape, landmarks, RIGHT_CHEEK)
+    
+    left_brightness = np.mean(l_channel[left_mask == 255])
+    right_brightness = np.mean(l_channel[right_mask == 255])
+    
+    if abs(left_brightness - right_brightness) > 25:
+        warnings.append("Uneven lighting detected. Try facing the light source directly.")
+    
+    return warnings
 
 
 def bbox_from_landmarks(landmarks, w, h, pad=0.02):
@@ -327,6 +359,13 @@ if uploaded:
         # Analyze skin colors (CLAHE still used internally for accuracy)
         results, processed = analyze_skin_colors_before_after(image, landmarks)
         
+        # Assess lighting quality and show warnings if needed
+        lighting_warnings = assess_lighting_quality(image, landmarks)
+        
+        if lighting_warnings:
+            for warning in lighting_warnings:
+                st.warning(f"⚠️ {warning}")
+        
         # === P1: PROMINENT "YOUR SKIN TONE" HERO RESULT ===
         st.markdown("---")
         st.markdown("## 🎨 Your Skin Tone")
@@ -349,21 +388,6 @@ if uploaded:
             </div>
         </div>
         ''', unsafe_allow_html=True)
-        
-        # Estimate skin tone classification (secondary info)
-        mask = np.zeros(image.shape[:2], dtype=np.uint8)
-        for region in (LEFT_CHEEK, RIGHT_CHEEK, FOREHEAD):
-            mask |= create_region_mask(image.shape, landmarks, region)
-
-        normalized_image = apply_clahe_lab(image)
-        lab = cv2.cvtColor(normalized_image, cv2.COLOR_BGR2LAB)
-        l_channel = lab[:, :, 0]
-        skin_pixels = l_channel[mask == 255]
-
-        if skin_pixels.size >= 500:
-            mean_l = float(np.mean(skin_pixels))
-            tone = estimate_skin_tone(mean_l)
-            st.markdown(f"<div style='text-align: center; font-size: 18px; color: #666;'>Classification: <strong>{tone}</strong></div>", unsafe_allow_html=True)
         
         st.caption("📸 Results may vary with lighting and makeup")
         
